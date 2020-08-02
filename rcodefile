@@ -1,0 +1,145 @@
+
+knitr::opts_chunk$set(echo = TRUE, fig.keep = "all")
+rm(list = ls()) #remove all data store in the Data Environment
+
+
+## Load necessary library, echo=TRUE
+library(lubridate)
+library(quantmod)
+library(xtable)
+library(dplyr)
+library(ggplot2)
+library(data.table)
+library(R.utils)
+library(ggrepel)
+library(choroplethr)
+
+
+#### Reading the data and performing EDA, echo=TRUE
+### Reading the data and processing the data
+stormdata <- as.data.table(read.csv(bzfile("C:/Users/HP/OneDrive/Documents/R/coursera/reproduceable research/Reproduecable research2/StormData.csv.bz2")))
+dim(stormdata)
+head(stormdata)
+colnames(stormdata)
+str(stormdata)
+
+###variable of interest, echo=TRUE
+a <- data.frame(varaible = c( "EVTYPE", "INJURIES", "FATALITIES",
+                              "PROPDMG",    "PROPDMGEXP", "CROPDMG",
+                              "CROPDMGEXP"),
+                meaning = c("Event type", "Number of injuries",
+                            "number of fatalities",  "Property damage",
+                            "Magnitude of property damage", "crop damage",
+                            "magntude of crop damage" ))
+
+a
+
+### varaible subsetting and processing, echo=TRUE
+substormdata <- stormdata[ , .(EVTYPE = as.factor(EVTYPE), INJURIES = as.numeric(INJURIES), FATALITIES = as.numeric(FATALITIES), PROPDMG = as.numeric(PROPDMG), PROPDMGEXP = as.factor(PROPDMGEXP), CROPDMG = as.numeric(CROPDMG), CROPDMGEXP = as.factor(CROPDMGEXP))]
+str(substormdata)
+
+### r change to uppercase, echo=TRUE
+####change to uppercase
+cprop <- c("PROPDMGEXP", "CROPDMGEXP")
+substormdata[,  (cprop) := c(lapply(.SD, toupper)), .SDcols = cprop]
+
+
+###Map property and crop damage alphanumeric exponents to numeric values, echo=TRUE
+# Map property and crop damage alphanumeric exponents to numeric values.
+propDmgKey <-  c("\"\"" = 10^0, "-" = 10^0, "+" = 10^0, "?" = 10^0,  "0" = 10^0,
+                 "1" = 10^1, "2" = 10^2, "3" = 10^3, "4" = 10^4,
+                 "5" = 10^5, "6" = 10^6, "7" = 10^7, "8" = 10^8,
+                 "9" = 10^9, "H" = 10^2, "K" = 10^3, "M" = 10^6, "B" = 10^9)
+
+cropDmgKey <-  c("\"\"" = 10^0, "?" = 10^0, "0" = 10^0, "2" = 10^2, "k" = 10^3, "K" = 10^3, "m" = 10^6, "M" = 10^6, "B" = 10^9)
+
+
+### r associate the exponents numeric, echo=TRUE
+substormdata[, PROPDMGEXP := propDmgKey[as.character(substormdata[,PROPDMGEXP])]]
+substormdata[is.na(PROPDMGEXP), PROPDMGEXP := 10^0 ]
+
+substormdata[, CROPDMGEXP := cropDmgKey[as.character(substormdata[,CROPDMGEXP])] ]
+substormdata[is.na(CROPDMGEXP), CROPDMGEXP := 10^0 ]
+
+
+### r additional columns, echo=TRUE
+###Columns relevant to Human Damage(injury, fatality and totalhumandamange)
+substormdata[ , ':='(injsum = sum(INJURIES), fatalsum = sum(FATALITIES)),
+              by = EVTYPE][ ,':='(sumHumanDamage = injsum + fatalsum)]
+
+str(substormdata)
+
+
+r Additional varaible for economic damage, echo=TRUE
+newsubstormdata <- substormdata[, ':='(proptotal = sum(PROPDMG * PROPDMGEXP ,
+                                    na.rm = T)), by = EVTYPE][ ,
+                                  ':='(croptotal = sum(CROPDMG * CROPDMGEXP,
+                                  na.rm = T)), by = EVTYPE][  , ':='(ECODMGTOT =                                       proptotal + croptotal)]
+
+
+str(newsubstormdata)
+
+
+### r Most harmful event, echo=TRUE
+MHE <- distinct(newsubstormdata[ , .(EVTYPE, injsum, fatalsum, sumHumanDamage)])
+MHEinj <- MHE[order(MHE$injsum, decreasing = TRUE), .(EVTYPE, injsum)][1:20, ]
+MHEfatal <- MHE[order(MHE$fatalsum, decreasing = TRUE), .(EVTYPE, fatalsum)][1:20, ]
+MHEhumanDamage <- MHE[order(MHE$sumHumanDamage, decreasing = TRUE), .(EVTYPE, sumHumanDamage)][1:20, ]
+##only first twenty most harmful events used
+#MHE implies most harmful events
+#MHEinj implies most harmful events that result to injuries
+#MHEfatal implies mst harmful events that results to fatalities
+#MHEhumanDamage implies most harmful events for combined total human damage
+
+
+## r Events with greatest human damage, echo=TRUE
+allMHE <- merge(merge(MHEinj, MHEfatal), MHEhumanDamage)
+
+allMHE
+
+
+r Most harmful events with respect to public health, echo=TRUE
+# Create chart for allMHE
+par(mfrow = c(1,2), mar = c(5.1, 4.1, 4.1, 2.1))
+barplot(allMHE$fatalsum, names.arg = allMHE$EVTYPE
+        , main = "Events by Total fatalities"
+        , ylab = "Number of fatalities (000s)", las = 3, col = "red")
+barplot(allMHE$injsum, names.arg = allMHE$EVTYPE
+        , main = "Events by Total injuries"
+        , ylab = "Number of injuries (000s)", las = 3, col = "blue")
+
+
+### r Barplot for total human damage, echo=TRUE
+        barplot(allMHE$sumHumanDamage, names.arg = allMHE$EVTYPE
+                , main = "Combined events for injuries & Fatalities"
+                , ylab = "Number of Injuries & Fatalities (000s)", las = 3, col = "green")
+
+
+###r Events with greatest economic consequences, echo=TRUE
+economy <- newsubstormdata %>% group_by(EVTYPE) %>% summarize(total.econs.damage = sum(ECODMGTOT)) %>% arrange(desc(total.econs.damage))
+TECOAFT <- head(economy, n = 20)
+TECOAFT
+
+property <- newsubstormdata %>% group_by(EVTYPE) %>% summarize(total.property.damage = sum(proptotal)) %>% arrange(desc(total.property.damage))
+TPTYcons <- head(property, n = 20)
+TPTYcons
+
+crop <- newsubstormdata %>% group_by(EVTYPE) %>% summarize(total.crop.damage = sum(croptotal)) %>% arrange(desc(total.crop.damage))
+topcropcons <- head(crop, n = 20)
+topcropcons
+
+### r Barchart of events with greatest economic consequences, echo=TRUE
+# Create chart for allMHE
+par(mfrow = c(1,2), mar = c(11, 5, 4, 4))
+barplot(TECOAFT$total.econs.damage, names.arg = TECOAFT$EVTYPE
+        , main = "Top Economic Damage events"
+        , ylab = "Total Economic Damage", las = 3, col = "Dark green")
+barplot(topcropcons$total.crop.damage, names.arg = topcropcons$EVTYPE
+        , main = "Top Crop Damage events"
+        , ylab = "Total Crop Damage", las = 3, col = "magenta")
+
+### r Barplot for total economic damage, echo=TRUE}
+
+        barplot(TPTYcons$total.property.damage, names.arg = TPTYcons$EVTYPE
+                , main = "Top Property Damage events"
+                , ylab = "Total property Damage", las = 3, col = "orange")
